@@ -13,3 +13,62 @@ def test_marketplace():
     award = client.post(f"/api/v1/missions/{mission['id']}/award/{bid['id']}")
     assert award.status_code == 200
     assert award.json()["status"] == "payment_pending"
+
+
+def _awarded_mission():
+    robot = client.post("/api/v1/robots", json={"name": "TurtleBot B", "owner": "Owner Two", "capability": "inspection", "rate_usd": 10}).json()
+    mission = client.post("/api/v1/missions", json={"description": "Inspect warehouse zone B", "task_type": "inspection", "budget_usd": 25}).json()
+    bid = client.post(f"/api/v1/missions/{mission['id']}/bids", json={"robot_id": robot["id"], "price_usd": 10}).json()
+    client.post(f"/api/v1/missions/{mission['id']}/award/{bid['id']}")
+    return mission
+
+
+def test_bid_over_budget_rejected():
+    robot = client.post("/api/v1/robots", json={"name": "TurtleBot C", "owner": "Owner Three", "capability": "inspection", "rate_usd": 50}).json()
+    mission = client.post("/api/v1/missions", json={"description": "Inspect warehouse zone C", "task_type": "inspection", "budget_usd": 20}).json()
+    r = client.post(f"/api/v1/missions/{mission['id']}/bids", json={"robot_id": robot["id"], "price_usd": 50})
+    assert r.status_code == 400
+
+
+def test_order_requires_paypal_credentials(monkeypatch):
+    monkeypatch.delenv("PAYPAL_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PAYPAL_CLIENT_SECRET", raising=False)
+    mission = _awarded_mission()
+    r = client.post("/api/v1/payments/orders", json={"mission_id": mission["id"]})
+    assert r.status_code == 503
+
+
+def test_checkout_and_capture_with_mocked_paypal(monkeypatch):
+    """PayPal HTTP is faked here; this verifies our state machine, not PayPal itself."""
+    import services.api.app.main as m
+
+    async def fake_token():
+        return "https://paypal.test", "tok"
+
+    class FakeResp:
+        def __init__(self, body, code=201):
+            self._b, self.status_code = body, code
+
+        def json(self):
+            return self._b
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, **kw):
+            if url.endswith("/v2/checkout/orders"):
+                return FakeResp({"id": "ORDER-1", "links": [{"rel": "approve", "href": "https://paypal.test/approve"}]})
+            return FakeResp({"status": "COMPLETED", "purchase_units": [{"payments": {"captures": [{"id": "CAP-1"}]}}]}, 201)
+
+    monkeypatch.setattr(m, "paypal_token", fake_token)
+    monkeypatch.setattr(m.httpx, "AsyncClient", FakeClient)
+    mission = _awarded_mission()
+    order = client.post("/api/v1/payments/orders", json={"mission_id": mission["id"]}).json()
+    assert order["approve_url"] == "https://paypal.test/approve"
+    again = client.post("/api/v1/payments/orders", json={"mission_id": mission["id"]}).json()
+    assert again["idempotent"] is True and again["order_id"] == "ORDER-1"
+    cap = client.post("/api/v1/payments/orders/ORDER-1/capture").json()
+    assert cap["status"] == "CAPTURED"
+    missions = {x["id"]: x for x in client.get("/api/v1/missions").json()}
+    assert missions[mission["id"]]["status"] == "ready"

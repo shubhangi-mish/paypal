@@ -3,8 +3,9 @@
 ## Implemented starter
 - [x] Repository scaffold and docs
 - [x] FastAPI durable SQLAlchemy marketplace API (SQLite local fallback; PostgreSQL via DATABASE_URL)
-- [x] Next.js basic UI
+- [x] Next.js UI: register robot, publish mission, bid, award, PayPal Sandbox checkout redirect and capture-on-return (not yet exercised against live Sandbox)
 - [x] PayPal sandbox create/capture API integration (credentials required; untested against a live sandbox account)
+- [x] API tests (5) cover marketplace flow, budget check, missing credentials, and checkout/capture state machine with PayPal HTTP mocked (mock only; not proof PayPal works)
 - [x] Gymnasium environment and optional PPO script
 - [x] Adapter interface
 
