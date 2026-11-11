@@ -56,6 +56,8 @@ def test_checkout_and_capture_with_mocked_paypal(monkeypatch):
         def __init__(self, *a, **k): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
+        async def get(self, url, **kw):
+            return FakeResp({"links": [{"rel": "approve", "href": "https://paypal.test/approve"}]}, 200)
         async def post(self, url, **kw):
             if url.endswith("/v2/checkout/orders"):
                 return FakeResp({"id": "ORDER-1", "links": [{"rel": "approve", "href": "https://paypal.test/approve"}]})
@@ -68,6 +70,7 @@ def test_checkout_and_capture_with_mocked_paypal(monkeypatch):
     assert order["approve_url"] == "https://paypal.test/approve"
     again = client.post("/api/v1/payments/orders", json={"mission_id": mission["id"]}).json()
     assert again["idempotent"] is True and again["order_id"] == "ORDER-1"
+    assert again["approve_url"] == "https://paypal.test/approve"
     cap = client.post("/api/v1/payments/orders/ORDER-1/capture").json()
     assert cap["status"] == "CAPTURED"
     missions = {x["id"]: x for x in client.get("/api/v1/missions").json()}

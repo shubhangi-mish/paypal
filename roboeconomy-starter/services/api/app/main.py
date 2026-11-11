@@ -164,7 +164,18 @@ async def create_order(data: OrderIn, db: Session = Depends(get_db)):
     bid = db.get(Bid, mission.awarded_bid_id)
     payment = db.scalar(select(PaymentIntent).where(PaymentIntent.mission_id == mission.id))
     if payment and payment.paypal_order_id:
-        return {"payment_intent_id": payment.id, "order_id": payment.paypal_order_id, "status": payment.status, "idempotent": True}
+        if payment.status == "CAPTURED":
+            raise HTTPException(409, "This mission has already been paid")
+        # Re-fetch the order so the buyer gets the approval link again instead of a dead end.
+        base, token = await paypal_token()
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(f"{base}/v2/checkout/orders/{payment.paypal_order_id}", headers={"Authorization": f"Bearer {token}"})
+        links = r.json().get("links", []) if r.status_code == 200 else []
+        approve_url = next((l["href"] for l in links if l.get("rel") in ("approve", "payer-action")), None)
+        if not approve_url:
+            host = "www.sandbox.paypal.com" if os.getenv("PAYPAL_ENV", "sandbox") == "sandbox" else "www.paypal.com"
+            approve_url = f"https://{host}/checkoutnow?token={payment.paypal_order_id}"
+        return {"payment_intent_id": payment.id, "order_id": payment.paypal_order_id, "approve_url": approve_url, "status": payment.status, "idempotent": True}
     payment = payment or PaymentIntent(mission_id=mission.id, amount_minor=bid.price_minor, currency=mission.currency, request_id=str(uuid.uuid4()))
     db.add(payment); db.flush()
     base, token = await paypal_token()
