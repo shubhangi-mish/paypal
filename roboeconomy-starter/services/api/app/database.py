@@ -7,12 +7,23 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from dotenv import load_dotenv
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")  # real env vars still win
 DEFAULT_URL = f"sqlite:///{Path(__file__).resolve().parents[2] / 'roboeconomy.db'}"
-DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_URL).replace("postgresql+asyncpg://", "postgresql+psycopg://")
-engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
+def _normalize(url: str) -> str:
+    """Accept postgres://, postgresql:// and +asyncpg URLs; always use the psycopg3 driver."""
+    for prefix in ("postgresql+asyncpg://", "postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+DATABASE_URL = _normalize(os.getenv("DATABASE_URL", DEFAULT_URL))
+# prepare_threshold=None: Supabase's transaction pooler (port 6543) rejects prepared statements.
+_connect_args = {"prepare_threshold": None} if DATABASE_URL.startswith("postgresql+psycopg") else {}
+engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True, connect_args=_connect_args)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
