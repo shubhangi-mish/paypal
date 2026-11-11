@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")  # real env vars still win
@@ -36,6 +36,8 @@ class Robot(Base):
     capability: Mapped[str] = mapped_column(String(32)); rate_minor: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(16)); status: Mapped[str] = mapped_column(String(48), default="registered-not-connected")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
 
 class Mission(Base):
     __tablename__ = "missions"
@@ -43,6 +45,7 @@ class Mission(Base):
     description: Mapped[str] = mapped_column(Text); task_type: Mapped[str] = mapped_column(String(32)); budget_minor: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default="USD"); status: Mapped[str] = mapped_column(String(48), default="PUBLISHED")
     awarded_bid_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
 
 class Bid(Base):
     __tablename__ = "bids"
@@ -56,7 +59,29 @@ class PaymentIntent(Base):
     mission_id: Mapped[str] = mapped_column(ForeignKey("missions.id"), unique=True); amount_minor: Mapped[int] = mapped_column(Integer); currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(40), default="APPROVAL_REQUIRED"); paypal_order_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     request_id: Mapped[str] = mapped_column(String(64), unique=True); capture_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
 
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
     id: Mapped[str] = mapped_column(String(128), primary_key=True); event_type: Mapped[str] = mapped_column(String(96))
+
+
+# Columns added after the first release. create_all() never alters existing tables, so add them here.
+_NEW_COLUMNS = {
+    "robots": {"model": "VARCHAR(120)", "available": "BOOLEAN DEFAULT TRUE"},
+    "missions": {"created_at": "TIMESTAMP"},
+    "payment_intents": {"created_at": "TIMESTAMP"},
+}
+
+def ensure_columns() -> None:
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in _NEW_COLUMNS.items():
+            if not insp.has_table(table):
+                continue
+            have = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in cols.items():
+                if name not in have:
+                    if engine.dialect.name == "sqlite":
+                        ddl = ddl.replace("DEFAULT TRUE", "DEFAULT 1")
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))

@@ -11,21 +11,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from services.api.app.database import Base, Bid, Mission, PaymentIntent, Robot, SessionLocal, WebhookEvent, engine
+from services.api.app.database import Base, Bid, Mission, PaymentIntent, Robot, SessionLocal, WebhookEvent, engine, ensure_columns
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 app = FastAPI(title="RoboEconomy API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()], allow_methods=["*"], allow_headers=["*"])
 Base.metadata.create_all(engine)
+ensure_columns()
 def get_db():
     with SessionLocal() as session:
         yield session
 def minor(v: Decimal) -> int:
     return int((v * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 def robot_out(x: Robot):
-    return {"id":x.id,"name":x.name,"owner":x.owner,"capability":x.capability,"rate_usd":x.rate_minor / 100,"source":x.source,"status":x.status}
+    return {"id":x.id,"name":x.name,"owner":x.owner,"capability":x.capability,"rate_usd":x.rate_minor / 100,"source":x.source,"status":x.status,"model":x.model,"available":x.available is not False,"capability_verified":False}
 def mission_out(x: Mission):
-    return {"id":x.id,"description":x.description,"task_type":x.task_type,"budget_usd":x.budget_minor / 100,"currency":x.currency,"status":x.status.lower(),"awarded_bid_id":x.awarded_bid_id}
+    return {"id":x.id,"description":x.description,"task_type":x.task_type,"budget_usd":x.budget_minor / 100,"currency":x.currency,"status":x.status.lower(),"awarded_bid_id":x.awarded_bid_id,"created_at":x.created_at.isoformat() if x.created_at else None}
 
 class RobotIn(BaseModel):
     name: str = Field(min_length=2)
@@ -33,6 +34,11 @@ class RobotIn(BaseModel):
     capability: Literal["inspection", "navigation", "delivery"] = "inspection"
     rate_usd: Decimal = Field(gt=0)
     source: Literal["simulated", "physical", "replay"] = "simulated"
+    model: str | None = Field(default=None, max_length=120)
+
+class RobotPatch(BaseModel):
+    available: bool | None = None
+    rate_usd: Decimal | None = Field(default=None, gt=0)
 
 class MissionIn(BaseModel):
     description: str = Field(min_length=8)
@@ -57,9 +63,46 @@ def list_robots(db: Session = Depends(get_db)):
 
 @app.post("/api/v1/robots")
 def add_robot(data: RobotIn, db: Session = Depends(get_db)):
-    item = Robot(name=data.name, owner=data.owner, capability=data.capability, rate_minor=minor(data.rate_usd), source=data.source)
+    item = Robot(name=data.name, owner=data.owner, capability=data.capability, rate_minor=minor(data.rate_usd), source=data.source, model=data.model)
     db.add(item); db.commit()
     return robot_out(item)
+
+@app.patch("/api/v1/robots/{robot_id}")
+def patch_robot(robot_id: str, data: RobotPatch, db: Session = Depends(get_db)):
+    robot = db.get(Robot, robot_id)
+    if not robot:
+        raise HTTPException(404, "Robot not found")
+    if data.available is not None:
+        robot.available = data.available
+    if data.rate_usd is not None:
+        robot.rate_minor = minor(data.rate_usd)
+    db.commit()
+    return robot_out(robot)
+
+@app.get("/api/v1/system")
+def system_status():
+    """Real configuration state for the UI. Nothing here is simulated."""
+    return {
+        "database": engine.url.get_backend_name(),
+        "paypal": {
+            "configured": bool(os.getenv("PAYPAL_CLIENT_ID") and os.getenv("PAYPAL_CLIENT_SECRET")),
+            "environment": os.getenv("PAYPAL_ENV", "sandbox"),
+            "webhook_configured": bool(os.getenv("PAYPAL_WEBHOOK_ID")),
+        },
+        "simulator": {"connected": False, "detail": "No Gazebo/ROS2 worker is reporting telemetry to this API."},
+        "agents": {"implemented": False},
+    }
+
+@app.get("/api/v1/payments")
+def list_payments(db: Session = Depends(get_db)):
+    out = []
+    for p in db.scalars(select(PaymentIntent)):
+        mission = db.get(Mission, p.mission_id)
+        out.append({"id": p.id, "mission_id": p.mission_id, "mission": mission.description if mission else None,
+                    "amount_usd": p.amount_minor / 100, "currency": p.currency, "status": p.status,
+                    "paypal_order_id": p.paypal_order_id, "capture_id": p.capture_id,
+                    "created_at": p.created_at.isoformat() if p.created_at else None})
+    return out
 
 @app.get("/api/v1/missions")
 def list_missions(db: Session = Depends(get_db)):

@@ -72,3 +72,13 @@ def test_checkout_and_capture_with_mocked_paypal(monkeypatch):
     assert cap["status"] == "CAPTURED"
     missions = {x["id"]: x for x in client.get("/api/v1/missions").json()}
     assert missions[mission["id"]]["status"] == "ready"
+
+
+def test_system_and_payments_and_robot_patch():
+    s = client.get("/api/v1/system").json()
+    assert s["simulator"]["connected"] is False and "paypal" in s
+    robot = client.post("/api/v1/robots", json={"name": "Patch Bot", "owner": "Owner P", "capability": "delivery", "rate_usd": 8, "model": "TurtleBot3 Burger"}).json()
+    assert robot["model"] == "TurtleBot3 Burger" and robot["available"] is True and robot["capability_verified"] is False
+    patched = client.patch(f"/api/v1/robots/{robot['id']}", json={"available": False}).json()
+    assert patched["available"] is False
+    assert isinstance(client.get("/api/v1/payments").json(), list)
