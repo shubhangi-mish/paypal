@@ -5,8 +5,8 @@ type Robot = { id: string; name: string; owner: string; capability: string; rate
 type Mission = { id: string; description: string; task_type: string; budget_usd: number; status: string; awarded_bid_id?: string | null };
 type Bid = { id: string; mission_id: string; robot_id: string; price_usd: number; status: string };
 
-// Empty string (set on Vercel) means same-origin; undefined falls back to local FastAPI.
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// "/" (set on Vercel) strips to "" = same-origin; undefined falls back to local FastAPI.
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
 export default function Home() {
   const [robots, setRobots] = useState<Robot[]>([]);

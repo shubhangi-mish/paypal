@@ -1,0 +1,7 @@
+{
+  "name": "roboeconomy",
+  "private": true,
+  "description": "Root manifest so Vercel detects Next.js; the app itself lives in apps/web.",
+  "scripts": { "build": "cd apps/web && npm run build" },
+  "dependencies": { "next": "^15.5.0", "react": "^19.1.0", "react-dom": "^19.1.0" }
+}

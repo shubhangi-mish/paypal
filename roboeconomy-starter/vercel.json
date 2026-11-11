@@ -1,7 +1,10 @@
 {
   "framework": "nextjs",
+  "installCommand": "npm install && cd apps/web && npm install",
   "buildCommand": "cd apps/web && npm run build",
-  "installCommand": "cd apps/web && npm install",
   "outputDirectory": "apps/web/.next",
-  "rewrites": [{"source": "/api/:path*", "destination": "/api/index.py"}]
+  "rewrites": [
+    {"source": "/health", "destination": "/api/index.py"},
+    {"source": "/api/:path*", "destination": "/api/index.py"}
+  ]
 }

@@ -16,4 +16,4 @@
 - [ ] Physical robot pairing and secure bridge
 - [ ] LangGraph autonomous agents and OR-Tools optimization
 - [~] Seeded held-out RL evaluation script added; dependencies/checkpoint are absent locally, and no Gazebo validation has been claimed
-- [~] Vercel deployment: Python serverless entrypoint and Vercel routing added; managed Postgres and separate Gazebo worker deployment remain required
+- [~] Vercel deployment: live on Vercel with Supabase Postgres; register/mission/bid/award verified live; PayPal checkout not yet verified (needs Sandbox keys). Gazebo worker remains separate
