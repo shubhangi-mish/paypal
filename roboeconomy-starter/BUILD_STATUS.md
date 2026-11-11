@@ -15,5 +15,5 @@
 - [~] Gazebo/ROS2: executable Jazzy odometry bridge added; full TurtleBot3/Nav2 world and API telemetry ingestion pending
 - [ ] Physical robot pairing and secure bridge
 - [ ] LangGraph autonomous agents and OR-Tools optimization
-- [~] Seeded held-out RL evaluation script added; dependencies/checkpoint are absent locally, and no Gazebo validation has been claimed
+- [~] RL: seeded held-out eval (200 seeds, synthetic dynamics) now reports random 1.13, greedy 3.55, oracle upper bound 3.89 mean net value; PPO not yet trained (needs PyTorch install); no Gazebo validation
 - [~] Vercel deployment: live on Vercel with Supabase Postgres; register/mission/bid/award verified live; PayPal Sandbox order creation verified live (real order ID + approve URL); buyer approval + capture + webhook still unverified. Gazebo worker remains separate
