@@ -2,7 +2,7 @@
 import {useEffect,useState} from "react";
 type Robot={id:string;name:string;owner:string;capability:string;rate_usd:number;status:string};
 type Mission={id:string;description:string;task_type:string;budget_usd:number;status:string;awarded_bid_id?:string|null};
-const API=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
+const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
 export default function Home(){
  const [robots,setRobots]=useState<Robot[]>([]),[missions,setMissions]=useState<Mission[]>([]),[message,setMessage]=useState("");
  const [name,setName]=useState("TurtleBot Alpha"),[owner,setOwner]=useState("Robot Owner A"),[rate,setRate]=useState("12");

@@ -15,7 +15,7 @@ from services.api.app.database import Base, Bid, Mission, PaymentIntent, Robot, 
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 app = FastAPI(title="RoboEconomy API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()], allow_methods=["*"], allow_headers=["*"])
 Base.metadata.create_all(engine)
 def get_db():
     with SessionLocal() as session:
