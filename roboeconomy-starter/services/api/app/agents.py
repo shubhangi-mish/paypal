@@ -2,7 +2,7 @@
 
 Honesty rules (see AGENTS.md):
 - Every decision row records which engine produced it. "rule-based" means deterministic code, not an LLM.
-  An LLM is used only when LLM_API_KEY / ANTHROPIC_API_KEY is configured, and only for interpretation and
+  An LLM is used only when OPENAI_API_KEY (or LLM_API_KEY / ANTHROPIC_API_KEY) is configured, and only for interpretation and
   explanation text. LLM output never sets prices or awards anything.
 - Prices, ownership, capability, availability and budget are enforced by deterministic validators.
 - Agents only *recommend*. A human awards the bid and pays; nothing here moves money.
@@ -41,33 +41,48 @@ def audit(db: Session, actor: str, action: str, resource: str, detail: dict | No
 
 
 def _llm_key() -> str | None:
-    return os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    return os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+
+
+def _is_anthropic(key: str | None) -> bool:
+    return bool(key) and key.startswith("sk-ant")
 
 
 def _llm_model() -> str:
-    return os.getenv("LLM_MODEL") or "claude-sonnet-5-5"
+    return os.getenv("LLM_MODEL") or ("claude-sonnet-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-nano")
 
 
 def _fast_model() -> str:
-    return os.getenv("LLM_FAST_MODEL") or "claude-haiku-5-5"
+    return os.getenv("LLM_FAST_MODEL") or ("claude-haiku-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-nano")
 
 
 async def llm_text(system: str, user: str, max_tokens: int = 400, model: str | None = None) -> str | None:
-    """One Anthropic Messages call. Returns None when no key is configured or the call fails."""
+    """One chat call: OpenAI Chat Completions by default (gpt-4.1-nano), Anthropic if the key is an Anthropic key.
+    Returns None when no key is configured or the call fails."""
     key = _llm_key()
     if not key:
         return None
     try:
         async with httpx.AsyncClient(timeout=25) as client:
+            if _is_anthropic(key):
+                r = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": model or _llm_model(), "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]},
+                )
+                if r.status_code != 200:
+                    return None
+                return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
             r = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": model or _llm_model(), "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]},
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
+                json={"model": model or _llm_model(), "max_tokens": max_tokens, "temperature": 0.3,
+                      "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
             )
-        if r.status_code != 200:
-            return None
-        return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
-    except httpx.HTTPError:
+            if r.status_code != 200:
+                return None
+            return r.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, KeyError, IndexError, ValueError):
         return None
 
 

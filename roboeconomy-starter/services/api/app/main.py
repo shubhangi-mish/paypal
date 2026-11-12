@@ -96,7 +96,7 @@ def system_status():
             "webhook_configured": bool(os.getenv("PAYPAL_WEBHOOK_ID")),
         },
         "simulator": {"connected": False, "detail": "No Gazebo/ROS2 worker is reporting telemetry to this API."},
-        "agents": {"implemented": True, "llm_configured": bool(os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")), "decision_engine": "llm+validators" if (os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")) else "rule-based+validators"},
+        "agents": {"implemented": True, "llm_configured": bool(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")), "decision_engine": "llm+validators" if (os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")) else "rule-based+validators"},
     }
 
 @app.get("/api/v1/payments")
