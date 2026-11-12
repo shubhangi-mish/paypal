@@ -68,23 +68,23 @@ class WebhookEvent(Base):
 
 
 class AuditLog(Base):
-    __tablename__ = "audit_logs"
+    __tablename__ = "re_audit_logs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     actor: Mapped[str] = mapped_column(String(64)); action: Mapped[str] = mapped_column(String(64))
     resource: Mapped[str] = mapped_column(String(96)); detail: Mapped[str] = mapped_column(Text, default="{}")
 
 class AgentRun(Base):
-    __tablename__ = "agent_runs"
+    __tablename__ = "re_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     mission_id: Mapped[str] = mapped_column(ForeignKey("missions.id")); kind: Mapped[str] = mapped_column(String(24))
     status: Mapped[str] = mapped_column(String(24), default="COMPLETED"); summary: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class AgentDecision(Base):
-    __tablename__ = "agent_decisions"
+    __tablename__ = "re_agent_decisions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id")); mission_id: Mapped[str] = mapped_column(String(36))
+    run_id: Mapped[str] = mapped_column(ForeignKey("re_agent_runs.id")); mission_id: Mapped[str] = mapped_column(String(36))
     seq: Mapped[int] = mapped_column(Integer); agent: Mapped[str] = mapped_column(String(32)); action: Mapped[str] = mapped_column(String(64))
     engine: Mapped[str] = mapped_column(String(64)); evidence: Mapped[str] = mapped_column(Text, default="{}"); explanation: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

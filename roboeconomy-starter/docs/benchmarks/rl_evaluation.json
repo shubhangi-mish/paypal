@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "generated_at": "2026-11-12T12:39:50.766007+00:00",
+    "eval_seeds": "1000-1499",
+    "dynamics": "synthetic; not Gazebo validated",
+    "note": "One-step decision environment (reject/solo/charge/handoff). Failed attempt = chose an infeasible action (-8).",
+    "ppo_training": {
+      "algorithm": "PPO (stable-baselines3, MlpPolicy)",
+      "total_timesteps": 100000,
+      "train_seed": 42,
+      "trained_at": "2026-11-12T12:39:38.047210+00:00",
+      "environment": "synthetic economic env; not Gazebo validated"
+    }
+  },
+  "results": {
+    "random": {
+      "episodes": 500,
+      "mean_net_value": 0.6524,
+      "std": 3.8533,
+      "stderr": 0.1723,
+      "failed_attempt_rate": 0.096,
+      "reject_rate": 0.248
+    },
+    "greedy": {
+      "episodes": 500,
+      "mean_net_value": 3.1004,
+      "std": 3.2003,
+      "stderr": 0.1431,
+      "failed_attempt_rate": 0.01,
+      "reject_rate": 0.0
+    },
+    "rule_based": {
+      "episodes": 500,
+      "mean_net_value": 3.3488,
+      "std": 2.7472,
+      "stderr": 0.1229,
+      "failed_attempt_rate": 0.0,
+      "reject_rate": 0.222
+    },
+    "oracle_upper_bound": {
+      "episodes": 500,
+      "mean_net_value": 3.5465,
+      "std": 2.6436,
+      "stderr": 0.1182,
+      "failed_attempt_rate": 0.0,
+      "reject_rate": 0.128
+    },
+    "ppo": {
+      "episodes": 500,
+      "mean_net_value": 3.4474,
+      "std": 2.8389,
+      "stderr": 0.127,
+      "failed_attempt_rate": 0.008,
+      "reject_rate": 0.116
+    }
+  }
+}

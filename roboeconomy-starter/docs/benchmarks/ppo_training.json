@@ -1,0 +1,7 @@
+{
+  "algorithm": "PPO (stable-baselines3, MlpPolicy)",
+  "total_timesteps": 100000,
+  "train_seed": 42,
+  "trained_at": "2026-11-12T12:39:38.047210+00:00",
+  "environment": "synthetic economic env; not Gazebo validated"
+}
