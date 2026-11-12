@@ -9,7 +9,7 @@ Target: under 3 minutes for YouTube. The full screen recording covers every feat
 "A robot owner lists a robot with its capability, hourly price, and a minimum price agents may accept. These robots are registered, not connected to hardware, and the app says so."
 
 **0:30 Marketplace**
-"Customers browse robots. Each shows its source (simulated, replay or physical), and capability is marked unverified because we have no simulator or hardware test yet."
+"Customers browse robots. Each shows its source (simulated, replay or physical), and capability is marked unverified until a simulator or hardware test confirms it, which is the next step beyond this MVP."
 
 **0:40 Mission and agents (Missions, then AI Agents)**
 "A customer publishes a mission with a budget. The agents interpret it, find matching robots, and negotiate with each owner over up to three rounds. A buyer agent and an owner agent trade offers. The owner's minimum price and the customer's budget are hard limits enforced in code, whatever the model says. The page shows every step, its engine, and an explanation. Agents only recommend. The customer decides."
