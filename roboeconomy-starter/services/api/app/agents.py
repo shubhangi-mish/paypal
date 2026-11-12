@@ -41,7 +41,8 @@ def audit(db: Session, actor: str, action: str, resource: str, detail: dict | No
 
 
 def _llm_key() -> str | None:
-    return os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    k = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    return k.strip() if k and k.strip() else None
 
 
 def _is_anthropic(key: str | None) -> bool:
@@ -479,6 +480,25 @@ def decisions(mission_id: str, db: Session = Depends(get_db)):
 def audit_log(limit: int = 100, db: Session = Depends(get_db)):
     rows = db.scalars(select(AuditLog).order_by(AuditLog.ts.desc()).limit(min(limit, 500)))
     return [{"id": a.id, "at": a.ts.isoformat(), "actor": a.actor, "action": a.action, "resource": a.resource, "detail": json.loads(a.detail)} for a in rows]
+
+
+@router.get("/api/v1/llm/check")
+async def llm_check():
+    """Makes one tiny LLM call and reports whether it worked. Never returns the key."""
+    key = _llm_key()
+    if not key:
+        return {"configured": False}
+    out = {"configured": True, "provider": "anthropic" if _is_anthropic(key) else "openai", "model": _llm_model(), "key_chars": len(key.strip()), "key_has_whitespace": key != key.strip()}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            if _is_anthropic(key):
+                r = await client.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": key.strip(), "anthropic-version": "2023-06-01"}, json={"model": _llm_model(), "max_tokens": 5, "messages": [{"role": "user", "content": "ok"}]})
+            else:
+                r = await client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {key.strip()}"}, json={"model": _llm_model(), "max_tokens": 5, "messages": [{"role": "user", "content": "ok"}]})
+        out.update(status=r.status_code, ok=r.status_code == 200, error=None if r.status_code == 200 else r.text[:200].replace(key, "***"))
+    except Exception as e:  # network or similar
+        out.update(ok=False, error=type(e).__name__)
+    return out
 
 
 @router.get("/api/v1/rl/benchmarks")
