@@ -3,6 +3,7 @@
   "installCommand": "npm install && cd apps/web && npm install",
   "buildCommand": "cd apps/web && npm run build",
   "outputDirectory": "apps/web/.next",
+  "functions": {"api/index.py": {"maxDuration": 60}},
   "rewrites": [
     {"source": "/health", "destination": "/api/index.py"},
     {"source": "/api/:path*", "destination": "/api/index.py"}

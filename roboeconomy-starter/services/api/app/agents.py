@@ -7,6 +7,7 @@ Honesty rules (see AGENTS.md):
 - Prices, ownership, capability, availability and budget are enforced by deterministic validators.
 - Agents only *recommend*. A human awards the bid and pays; nothing here moves money.
 """
+import asyncio
 import json
 import os
 import re
@@ -47,7 +48,11 @@ def _llm_model() -> str:
     return os.getenv("LLM_MODEL") or "claude-sonnet-5-5"
 
 
-async def llm_text(system: str, user: str, max_tokens: int = 400) -> str | None:
+def _fast_model() -> str:
+    return os.getenv("LLM_FAST_MODEL") or "claude-haiku-5-5"
+
+
+async def llm_text(system: str, user: str, max_tokens: int = 400, model: str | None = None) -> str | None:
     """One Anthropic Messages call. Returns None when no key is configured or the call fails."""
     key = _llm_key()
     if not key:
@@ -57,13 +62,28 @@ async def llm_text(system: str, user: str, max_tokens: int = 400) -> str | None:
             r = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": _llm_model(), "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]},
+                json={"model": model or _llm_model(), "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]},
             )
         if r.status_code != 200:
             return None
         return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
     except httpx.HTTPError:
         return None
+
+
+async def llm_json(system: str, user: str, max_tokens: int = 200, model: str | None = None) -> dict | None:
+    raw = await llm_text(system, user, max_tokens, model)
+    if not raw:
+        return None
+    try:
+        out = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+        return out if isinstance(out, dict) else None
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+
+def _num(v) -> int | None:
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
 class Recorder:
@@ -134,6 +154,62 @@ def negotiate(ask: int, floor: int, budget: int) -> dict:
     return {"agreed": False, "price_minor": None, "rounds": rounds, "reason": f"no agreement within {MAX_ROUNDS} rounds"}
 
 
+async def negotiate_smart(task: str, ask: int, floor: int, budget: int) -> tuple[dict, str]:
+    """Two LLM agents (buyer, robot owner) negotiate in turns. Every number they produce is clamped by validators:
+    buyer offer <= min(budget, listed price); robot counter within [owner floor, listed price]; agreement only if offer >= floor.
+    Falls back to the deterministic protocol if no LLM key is set or any call fails."""
+    if not _llm_key() or floor > budget:
+        return negotiate(ask, floor, budget), "rule-based"
+    cap, rounds, history = min(budget, ask), [], []
+    for n in range(1, MAX_ROUNDS + 1):
+        b = await llm_json(
+            "You are the BUYER's negotiation agent on a robot-hire marketplace. Get the lowest fair price, conceding gradually; you must stay within your budget limit. "
+            'Reply ONLY JSON: {"offer_minor": int, "message": "one short sentence"}. Amounts are integer cents.',
+            json.dumps({"task": task, "robot_listed_price_minor": ask, "your_budget_limit_minor": cap, "round": n, "max_rounds": MAX_ROUNDS, "history": history}), 120, _fast_model())
+        o = _num(b.get("offer_minor")) if b else None
+        if o is None:
+            return negotiate(ask, floor, budget), "rule-based"
+        offer = max(1, min(o, cap))
+        s_ = await llm_json(
+            "You are the ROBOT OWNER's negotiation agent. Get a good price but close the deal if the offer is fair and at or above your minimum; never go below your minimum. "
+            'Reply ONLY JSON: {"accept": bool, "counter_minor": int, "message": "one short sentence"}. Amounts are integer cents.',
+            json.dumps({"task": task, "listed_price_minor": ask, "your_minimum_minor": floor, "buyer_offer_minor": offer, "round": n, "max_rounds": MAX_ROUNDS, "history": history}), 120, _fast_model())
+        if not s_:
+            return negotiate(ask, floor, budget), "rule-based"
+        counter = max(floor, min(_num(s_.get("counter_minor")) or ask, ask))
+        accept = bool(s_.get("accept")) and offer >= floor
+        rounds.append({"round": n, "buyer_offer_minor": offer, "robot_counter_minor": offer if accept else counter,
+                       "buyer_message": str((b or {}).get("message", ""))[:200], "robot_message": str(s_.get("message", ""))[:200]})
+        history.append({"round": n, "buyer_offer_minor": offer, "robot_counter_minor": offer if accept else counter})
+        price = offer if accept else (counter if offer >= counter else None)
+        if price is not None:
+            assert floor <= price <= budget  # validator
+            return {"agreed": True, "price_minor": price, "rounds": rounds, "reason": f"agreed in round {n}"}, f"llm:{_fast_model()}"
+    return {"agreed": False, "price_minor": None, "rounds": rounds, "reason": f"no agreement within {MAX_ROUNDS} rounds"}, f"llm:{_fast_model()}"
+
+
+async def review_risk(robot: Robot, task: str) -> tuple[list[str], str]:
+    """Deterministic flags are always kept; an LLM reviewer may add up to two more."""
+    flags = risk_flags(robot)
+    j = await llm_json("You are a risk reviewer for robot hire. Given the facts, list up to 2 extra concrete risks for this task, "
+                       'not repeating the known flags. Reply ONLY JSON: {"extra_flags": ["..."]}.',
+                       json.dumps({"task": task, "robot": robot.name, "model": robot.model, "capability": robot.capability, "source": robot.source, "status": robot.status, "known_flags": flags}), 160)
+    extra = [str(x)[:160] for x in (j or {}).get("extra_flags", []) if isinstance(x, str)][:2]
+    return flags + extra, (f"llm:{_llm_model()}" if j is not None else "rule-based")
+
+
+async def choose_best(deals: list[tuple[Robot, int]], budget: int, flags: dict[str, list[str]]) -> tuple[Robot, int, str | None, str]:
+    """LLM picks among already-agreed, validator-approved offers (it can only choose one, never invent one). Default: cheapest."""
+    best, price = deals[0]
+    j = await llm_json("You advise a customer hiring a robot. Choose the best option weighing price against risk. "
+                       'Reply ONLY JSON: {"index": int, "reason": "one or two sentences using only the given facts"}.',
+                       json.dumps({"budget_minor": budget, "options": [{"index": i, "robot": rb.name, "model": rb.model, "price_minor": pr, "source": rb.source, "risks": flags.get(rb.name, [])} for i, (rb, pr) in enumerate(deals)]}), 220)
+    i = _num((j or {}).get("index"))
+    if i is not None and 0 <= i < len(deals) and (j or {}).get("reason"):
+        return deals[i][0], deals[i][1], str(j["reason"])[:400], f"llm:{_llm_model()}"
+    return best, price, None, "rule-based"
+
+
 def risk_flags(robot: Robot) -> list[str]:
     flags = ["capability not verified by a simulator or hardware test"]
     if robot.source != "physical":
@@ -180,10 +256,10 @@ async def agent_run(mission_id: str, db: Session = Depends(get_db)):
 
     deals = []
     existing = {b.robot_id for b in db.scalars(select(Bid).where(Bid.mission_id == mission_id))}
-    for r in candidates:
+    results = await asyncio.gather(*[negotiate_smart(mission.description, r.rate_minor, owner_floor(r), mission.budget_minor) for r in candidates])
+    for r, (res, neg_eng) in zip(candidates, results):
         floor, ask = owner_floor(r), r.rate_minor
-        res = negotiate(ask, floor, mission.budget_minor)
-        rec.log("negotiation", "negotiated_with_robot", "rule-based",
+        rec.log("negotiation", "negotiated_with_robot", neg_eng,
                 {"robot": r.name, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": mission.budget_minor, **res},
                 f"{r.name}: " + (f"agreed at {usd(res['price_minor'])} ({res['reason']}); owner floor {usd(floor)} respected." if res["agreed"] else f"no deal: {res['reason']}."))
         if res["agreed"]:
@@ -192,14 +268,17 @@ async def agent_run(mission_id: str, db: Session = Depends(get_db)):
                 db.add(Bid(mission_id=mission_id, robot_id=r.id, price_minor=res["price_minor"]))
 
     ranked = sorted(deals, key=lambda d: d[1])
-    rec.log("risk", "reviewed_risk", "rule-based", {"flags": {r.name: risk_flags(r) for r, _ in ranked}},
+    reviews = await asyncio.gather(*[review_risk(r, mission.description) for r, _ in ranked])
+    flags = {r.name: f for (r, _), (f, _e) in zip(ranked, reviews)}
+    risk_eng = next((e for _, e in reviews if e.startswith("llm")), "rule-based")
+    rec.log("risk", "reviewed_risk", risk_eng, {"flags": flags},
             "Risk flags are listed per robot. None are blocking, but capability is unverified until a simulator or hardware test exists." if ranked else "No agreed offers to review.")
 
     recommendation = None
     if ranked:
-        best, price = ranked[0]
+        best, price, why, pick_eng = await choose_best(ranked, mission.budget_minor, flags)
         fallback = f"Recommended {best.name} at {usd(price)}, the lowest agreed price within your {usd(mission.budget_minor)} budget and above the owner's minimum."
-        text, eng2 = await explain(f"best={best.name}; price={usd(price)}; budget={usd(mission.budget_minor)}; offers={len(ranked)}", fallback)
+        text, eng2 = (why, pick_eng) if why else await explain(f"best={best.name}; price={usd(price)}; budget={usd(mission.budget_minor)}; offers={len(ranked)}", fallback)
         recommendation = {"robot_id": best.id, "robot": best.name, "price_usd": price / 100, "requires_approval": True}
         rec.log("explanation", "explained_recommendation", eng2, recommendation, text)
     else:
@@ -275,12 +354,14 @@ async def team_run(mission_id: str, data: TeamIn | None = None, db: Session = De
                     f"Not enough capacity: {len(pool)} robot(s) can cover at most {len(pool) * cap} of {zones} zones in time.")
             return finish({"team": None, "reason": "not enough robots to meet the deadline"}, "FAILED")
         failed = None
+        plan = []
         for rid, n in alloc.items():
             r = next(x for x in pool if x.id == rid)
             frac = n / zones
-            ask, floor, bud = int(round(r.rate_minor * frac)), int(round(owner_floor(r) * frac)), int(round(mission.budget_minor * frac))
-            res = negotiate(ask, floor, bud)
-            rec.log("negotiation", "negotiated_share", "rule-based", {"robot": r.name, "zones": n, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": bud, **res},
+            plan.append((rid, n, r, int(round(r.rate_minor * frac)), int(round(owner_floor(r) * frac)), int(round(mission.budget_minor * frac))))
+        outcomes = await asyncio.gather(*[negotiate_smart(f"{mission.description} (share: {n} of {zones} zones)", ask, floor, bud) for _, n, _, ask, floor, bud in plan])
+        for (rid, n, r, ask, floor, bud), (res, neg_eng) in zip(plan, outcomes):
+            rec.log("negotiation", "negotiated_share", neg_eng, {"robot": r.name, "zones": n, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": bud, **res},
                     f"{r.name} for {n}/{zones} zones: " + (f"agreed at {usd(res['price_minor'])}; owner floor {usd(floor)} respected." if res["agreed"] else f"no deal: {res['reason']}; trying a different team."))
             if res["agreed"]:
                 deals[rid] = {"robot": r, "zones": n, "price": res["price_minor"]}
@@ -299,7 +380,9 @@ async def team_run(mission_id: str, data: TeamIn | None = None, db: Session = De
     for rid, d in deals.items():
         db.add(Bid(mission_id=mission_id, robot_id=rid, price_minor=d["price"], team_id=team_id, share_zones=d["zones"]))
         members.append({"robot_id": rid, "robot": d["robot"].name, "zones": d["zones"], "price_usd": d["price"] / 100})
-    rec.log("risk", "reviewed_risk", "rule-based", {"flags": {d["robot"].name: risk_flags(d["robot"]) for d in deals.values()}, "team_risk": "a team has more points of failure and needs every member to finish"},
+    reviews = await asyncio.gather(*[review_risk(d["robot"], mission.description) for d in deals.values()])
+    risk_eng = next((e for _, e in reviews if e.startswith("llm")), "rule-based")
+    rec.log("risk", "reviewed_risk", risk_eng, {"flags": {d["robot"].name: f for d, (f, _e) in zip(deals.values(), reviews)}, "team_risk": "a team has more points of failure and needs every member to finish"},
             "Capability is unverified for every member, and a team depends on all members finishing. Recovery can replace one after a failure.")
     team = {"team_id": team_id, "members": members, "total_usd": total / 100, "requires_approval": True}
     fallback = f"Recommended a team of {len(members)}: " + ", ".join(f"{m['robot']} ({m['zones']} zones, ${m['price_usd']:.2f})" for m in members) + f". Total {usd(total)} within your {usd(mission.budget_minor)} budget; one robot alone would need {zones * ZONE_MINUTES} min against your {deadline} min deadline."
@@ -333,11 +416,10 @@ async def recovery(mission_id: str, data: FailureIn, db: Session = Depends(get_d
     subs = [r for r in db.scalars(select(Robot)) if r.id != failed.id and r.capability == mission.task_type and r.available is not False]
     rec.log("discovery", "found_substitutes", "rule-based", {"substitutes": [s.name for s in subs]}, f"{len(subs)} substitute robot(s) available.")
     offers = []
-    for r in subs:
-        ask = int(round(r.rate_minor * data.remaining_fraction))
-        floor = int(round(owner_floor(r) * data.remaining_fraction))
-        res = negotiate(ask, floor, remaining_budget)
-        rec.log("negotiation", "negotiated_with_robot", "rule-based", {"robot": r.name, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": remaining_budget, **res},
+    sub_plan = [(r, int(round(r.rate_minor * data.remaining_fraction)), int(round(owner_floor(r) * data.remaining_fraction))) for r in subs]
+    outcomes = await asyncio.gather(*[negotiate_smart(f"{mission.description} (finish the remaining {int(data.remaining_fraction * 100)}% after {failed.name} had a {data.reason} failure)", ask, floor, remaining_budget) for _, ask, floor in sub_plan])
+    for (r, ask, floor), (res, neg_eng) in zip(sub_plan, outcomes):
+        rec.log("negotiation", "negotiated_with_robot", neg_eng, {"robot": r.name, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": remaining_budget, **res},
                 f"{r.name}: " + (f"offers to finish the remaining {int(data.remaining_fraction * 100)}% for {usd(res['price_minor'])}." if res["agreed"] else f"no deal: {res['reason']}."))
         if res["agreed"]:
             offers.append((r, res["price_minor"]))

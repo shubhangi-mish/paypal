@@ -22,7 +22,7 @@ function EngineTag({ engine }: { engine: string }) {
 }
 
 function Rounds({ evidence }: { evidence: Record<string, unknown> }) {
-  const rounds = evidence.rounds as { round: number; buyer_offer_minor: number; robot_counter_minor: number }[] | undefined;
+  const rounds = evidence.rounds as { round: number; buyer_offer_minor: number; robot_counter_minor: number; buyer_message?: string; robot_message?: string }[] | undefined;
   if (!rounds?.length) return null;
   return (
     <div className="scroll-x">
@@ -32,6 +32,7 @@ function Rounds({ evidence }: { evidence: Record<string, unknown> }) {
             <th>Round</th>
             <th>Buyer offers</th>
             <th>Robot counters</th>
+            <th>Messages</th>
           </tr>
         </thead>
         <tbody>
@@ -40,6 +41,7 @@ function Rounds({ evidence }: { evidence: Record<string, unknown> }) {
               <td>{r.round}</td>
               <td>{usd(r.buyer_offer_minor / 100)}</td>
               <td>{usd(r.robot_counter_minor / 100)}</td>
+              <td className="sub">{[r.buyer_message, r.robot_message].filter(Boolean).join(" / ")}</td>
             </tr>
           ))}
         </tbody>
