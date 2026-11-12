@@ -30,3 +30,16 @@ def test_llm_garbage_falls_back_to_deterministic(monkeypatch):
     monkeypatch.setattr(agents, "llm_text", junk)
     res, eng = asyncio.run(agents.negotiate_smart("t", ask=1000, floor=800, budget=900))
     assert eng == "rule-based" and res["agreed"]
+
+
+def test_grounding_rejects_invented_claims_but_allows_unverified():
+    assert not agents.grounded("This robot has better model verification.")
+    assert not agents.grounded("More reliable and faster.")
+    assert agents.grounded("Capability is unverified, so price decides.")
+
+
+def test_buyer_cannot_concede_faster_than_schedule(monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.setattr(agents, "llm_text", _fake(offer=1000, counter=1000, accept=False))  # buyer jumps straight to the listed price
+    res, _ = asyncio.run(agents.negotiate_smart("t", ask=1000, floor=700, budget=1000))
+    assert res["rounds"][0]["buyer_offer_minor"] <= 667  # round 1 of 3: 500 + 500/3

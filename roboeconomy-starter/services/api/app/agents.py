@@ -179,13 +179,14 @@ async def negotiate_smart(task: str, ask: int, floor: int, budget: int) -> tuple
     cap, rounds, history = min(budget, ask), [], []
     for n in range(1, MAX_ROUNDS + 1):
         b = await llm_json(
-            "You are the BUYER's negotiation agent on a robot-hire marketplace. Get the lowest fair price, conceding gradually; you must stay within your budget limit. "
+            "You are the BUYER's negotiation agent on a robot-hire marketplace. Open well below the listed price (about 50-60% of it) and concede in small steps each round; do not accept the listed price unless it is the final round. Stay within your budget limit. "
             'Reply ONLY JSON: {"offer_minor": int, "message": "one short sentence"}. Amounts are integer cents.',
             json.dumps({"task": task, "robot_listed_price_minor": ask, "your_budget_limit_minor": cap, "round": n, "max_rounds": MAX_ROUNDS, "history": history}), 120, _fast_model())
         o = _num(b.get("offer_minor")) if b else None
         if o is None:
             return negotiate(ask, floor, budget), "rule-based"
-        offer = max(1, min(o, cap))
+        schedule_cap = int(round(ask * 0.5 + (cap - ask * 0.5) * n / MAX_ROUNDS))  # validator: the buyer may not concede faster than the standard schedule
+        offer = max(1, min(o, cap, schedule_cap))
         s_ = await llm_json(
             "You are the ROBOT OWNER's negotiation agent. Get a good price but close the deal if the offer is fair and at or above your minimum; never go below your minimum. "
             'Reply ONLY JSON: {"accept": bool, "counter_minor": int, "message": "one short sentence"}. Amounts are integer cents.',
@@ -210,18 +211,18 @@ async def review_risk(robot: Robot, task: str) -> tuple[list[str], str]:
     j = await llm_json("You are a risk reviewer for robot hire. Given the facts, list up to 2 extra concrete risks for this task, "
                        'not repeating the known flags. Reply ONLY JSON: {"extra_flags": ["..."]}.',
                        json.dumps({"task": task, "robot": robot.name, "model": robot.model, "capability": robot.capability, "source": robot.source, "status": robot.status, "known_flags": flags}), 160)
-    extra = [str(x)[:160] for x in (j or {}).get("extra_flags", []) if isinstance(x, str)][:2]
+    extra = [str(x)[:160] for x in (j or {}).get("extra_flags", []) if isinstance(x, str) and grounded(x)][:2]
     return flags + extra, (f"llm:{_llm_model()}" if j is not None else "rule-based")
 
 
 async def choose_best(deals: list[tuple[Robot, int]], budget: int, flags: dict[str, list[str]]) -> tuple[Robot, int, str | None, str]:
     """LLM picks among already-agreed, validator-approved offers (it can only choose one, never invent one). Default: cheapest."""
     best, price = deals[0]
-    j = await llm_json("You advise a customer hiring a robot. Choose the best option weighing price against risk. "
+    j = await llm_json("You advise a customer hiring a robot. Choose the best option weighing price against the listed risks. Only use the given facts; do not claim anything about quality, reliability, speed or verification that is not listed. "
                        'Reply ONLY JSON: {"index": int, "reason": "one or two sentences using only the given facts"}.',
                        json.dumps({"budget_minor": budget, "options": [{"index": i, "robot": rb.name, "model": rb.model, "price_minor": pr, "source": rb.source, "risks": flags.get(rb.name, [])} for i, (rb, pr) in enumerate(deals)]}), 220)
     i = _num((j or {}).get("index"))
-    if i is not None and 0 <= i < len(deals) and (j or {}).get("reason"):
+    if i is not None and 0 <= i < len(deals) and grounded((j or {}).get("reason")):
         return deals[i][0], deals[i][1], str(j["reason"])[:400], f"llm:{_llm_model()}"
     return best, price, None, "rule-based"
 
@@ -235,13 +236,24 @@ def risk_flags(robot: Robot) -> list[str]:
     return flags
 
 
+_UNSUPPORTED = ("reliab", "certif", "experience", "faster", "quicker", "accura", "track record", "superior", "best-in-class", "better model", "durab", "premium")
+
+
+def grounded(text: str | None) -> bool:
+    """Reject LLM prose that claims robot qualities we have no data for (verification, reliability, speed, ...)."""
+    if not text:
+        return False
+    t = text.lower().replace("unverified", "").replace("not verified", "").replace("not been verified", "")
+    return not ("verif" in t or any(w in t for w in _UNSUPPORTED))
+
+
 def usd(m: int) -> str:
     return f"${m / 100:.2f}"
 
 
 async def explain(facts: str, fallback: str) -> tuple[str, str]:
-    text = await llm_text("Explain this robot-marketplace decision to a non-technical customer in two sentences. Use only the given facts; do not add numbers.", facts, 160)
-    return (text.strip(), f"llm:{_llm_model()}") if text else (fallback, "rule-based")
+    text = await llm_text("Explain this robot-marketplace decision to a non-technical customer in two sentences. Use only the given facts; do not add numbers and do not claim anything about robot quality, reliability, speed or verification that is not in the facts.", facts, 160)
+    return (text.strip(), f"llm:{_llm_model()}") if grounded(text) else (fallback, "rule-based")
 
 
 # ---------------------------------------------------------------- endpoints
