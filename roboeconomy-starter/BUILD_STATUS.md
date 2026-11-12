@@ -14,6 +14,13 @@
 - [~] PayPal checkout: mission-bound idempotent order/capture records and webhook signature verification implemented; requires configured Sandbox credentials for live validation
 - [~] Gazebo/ROS2: executable Jazzy odometry bridge added; full TurtleBot3/Nav2 world and API telemetry ingestion pending
 - [ ] Physical robot pairing and secure bridge
-- [ ] LangGraph autonomous agents and OR-Tools optimization
+- [~] Agents (rule-based engine, optional LLM for interpretation/explanation text when LLM_API_KEY is set; no LLM key configured so far): interpreter, discovery, 3-round negotiation bounded by owner floor and buyer budget, risk flags, recovery after an INJECTED failure, explanations, audit log. Verified live on Vercel. No LangGraph, no OR-Tools/coalitions, no LLM run yet
 - [~] RL: seeded held-out eval (200 seeds, synthetic dynamics) now reports random 1.13, greedy 3.55, oracle upper bound 3.89 mean net value; PPO not yet trained (needs PyTorch install); no Gazebo validation
 - [~] Vercel deployment: live on Vercel with Supabase Postgres; register/mission/bid/award verified live; PayPal Sandbox order creation verified live (real order ID + approve URL); buyer approval + capture + webhook still unverified. Gazebo worker remains separate
+
+## RL result (synthetic environment, 500 held-out seeds, docs/benchmarks/rl_evaluation.json)
+random 0.65, greedy 3.10, rule-based 3.35, PPO 3.45 (100k steps), oracle upper bound 3.55 mean net value (std err about 0.12-0.17).
+PPO is not significantly better than the rule-based baseline (difference is within one standard error). Not connected to marketplace decisions; not Gazebo validated.
+
+## Not done
+Gazebo/ROS 2 simulation (no VM by decision), auth/roles, PayPal buyer-approval+capture and webhook delivery not yet observed live, extra payment for recovery, Alembic.
