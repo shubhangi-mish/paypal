@@ -77,7 +77,7 @@ async def llm_text(system: str, user: str, max_tokens: int = 400, model: str | N
             r = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
-                json={"model": model or _llm_model(), "max_tokens": max_tokens, "temperature": 0.3,
+                json={"model": model or _llm_model(), "max_completion_tokens": max_tokens + 300,
                       "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
             )
             if r.status_code != 200:
@@ -483,18 +483,18 @@ def audit_log(limit: int = 100, db: Session = Depends(get_db)):
 
 
 @router.get("/api/v1/llm/check")
-async def llm_check():
+async def llm_check(model: str | None = None):
     """Makes one tiny LLM call and reports whether it worked. Never returns the key."""
     key = _llm_key()
     if not key:
         return {"configured": False}
-    out = {"configured": True, "provider": "anthropic" if _is_anthropic(key) else "openai", "model": _llm_model(), "key_chars": len(key.strip()), "key_has_whitespace": key != key.strip()}
+    out = {"configured": True, "provider": "anthropic" if _is_anthropic(key) else "openai", "model": model or _llm_model(), "key_chars": len(key.strip()), "key_has_whitespace": key != key.strip()}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             if _is_anthropic(key):
                 r = await client.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": key.strip(), "anthropic-version": "2023-06-01"}, json={"model": _llm_model(), "max_tokens": 5, "messages": [{"role": "user", "content": "ok"}]})
             else:
-                r = await client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {key.strip()}"}, json={"model": _llm_model(), "max_tokens": 5, "messages": [{"role": "user", "content": "ok"}]})
+                r = await client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {key.strip()}"}, json={"model": model or _llm_model(), "max_completion_tokens": 200, "messages": [{"role": "user", "content": "ok"}]})
         out.update(status=r.status_code, ok=r.status_code == 200, error=None if r.status_code == 200 else r.text[:200].replace(key, "***"))
     except Exception as e:  # network or similar
         out.update(ok=False, error=type(e).__name__)
