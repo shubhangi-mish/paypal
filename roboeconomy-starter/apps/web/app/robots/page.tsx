@@ -5,7 +5,7 @@ import { Badge, Card, Empty, ErrorState, MissionStatus, PageHeader, RobotAvatar,
 import { call, captured, useMarket, usd, type Capability, type Robot, type Source } from "../lib/api";
 
 function RegisterForm({ onDone }: { onDone: () => void }) {
-  const [f, setF] = useState({ name: "", model: "", owner: "", capability: "inspection" as Capability, rate: "12", source: "simulated" as Source });
+  const [f, setF] = useState({ name: "", model: "", owner: "", capability: "inspection" as Capability, rate: "12", floor: "", source: "simulated" as Source });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }));
@@ -15,7 +15,7 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setMsg(null);
     try {
-      await call("/api/v1/robots", "POST", { name: f.name, owner: f.owner, capability: f.capability, rate_usd: Number(f.rate), source: f.source, model: f.model || null });
+      await call("/api/v1/robots", "POST", { name: f.name, owner: f.owner, capability: f.capability, rate_usd: Number(f.rate), source: f.source, model: f.model || null, min_price_usd: f.floor ? Number(f.floor) : null });
       setMsg({ ok: true, text: `${f.name} registered. It is not connected to a live robot yet.` });
       setF((s) => ({ ...s, name: "", model: "" }));
       onDone();
@@ -53,6 +53,8 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
       </div>
       <label htmlFor="rr">Service price (USD per hour)</label>
       <input id="rr" className="field" type="number" min="1" step="0.5" required value={f.rate} onChange={(e) => set("rate", e.target.value)} />
+      <label htmlFor="rf">Minimum price agents may accept (optional, USD)</label>
+      <input id="rf" className="field" type="number" min="1" step="0.5" value={f.floor} onChange={(e) => set("floor", e.target.value)} placeholder="Defaults to 75% of your price" />
       <button className="btn" disabled={busy}>
         {busy ? "Registering…" : "Register robot"}
       </button>
@@ -111,7 +113,7 @@ function OwnedRobot({ robot, m }: { robot: Robot; m: ReturnType<typeof useMarket
         </button>
       </div>
       <div className="sub" style={{ marginTop: 10 }}>
-        Offers placed: {myBids.length} · Won: {won.length} · Confirmed earnings: <strong style={{ display: "inline", color: "var(--text)" }}>{usd(earned)}</strong>
+        Agent floor: {robot.min_price_usd ? usd(robot.min_price_usd) : "75% of price (default)"} · Offers placed: {myBids.length} · Won: {won.length} · Confirmed earnings: <strong style={{ display: "inline", color: "var(--text)" }}>{usd(earned)}</strong>
       </div>
       {myBids.map((b) => {
         const mission = m.missions.find((x) => x.id === b.mission_id);

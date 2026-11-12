@@ -18,6 +18,7 @@ export type Robot = {
   model: string | null;
   available: boolean;
   capability_verified: boolean;
+  min_price_usd: number | null;
 };
 export type Mission = {
   id: string;
@@ -45,7 +46,19 @@ export type SystemStatus = {
   database: string;
   paypal: { configured: boolean; environment: string; webhook_configured: boolean };
   simulator: { connected: boolean; detail: string };
-  agents: { implemented: boolean };
+  agents: { implemented: boolean; llm_configured: boolean; decision_engine: string };
+};
+
+export type Decision = {
+  id: string; run_id: string; run_kind: "auction" | "recovery"; run_status: string; seq: number; agent: string; action: string;
+  engine: string; evidence: Record<string, unknown>; explanation: string; at: string;
+};
+export type AuditEntry = { id: string; at: string; actor: string; action: string; resource: string; detail: Record<string, unknown> };
+export type PolicyResult = { episodes?: number; mean_net_value?: number; std?: number; stderr?: number; failed_attempt_rate?: number; reject_rate?: number; available?: boolean; reason?: string };
+export type Benchmarks = {
+  available: boolean;
+  meta?: { eval_seeds: string; dynamics: string; note: string; generated_at: string; ppo_training?: { algorithm: string; total_timesteps: number; train_seed: number } };
+  results?: Record<string, PolicyResult>;
 };
 
 export async function call<T>(path: string, method: "GET" | "POST" | "PATCH" = "GET", body?: unknown): Promise<T> {

@@ -191,6 +191,11 @@ export function MissionCard({ mission, robots, bids, onChanged }: { mission: Mis
               Bid as {r.name}
             </button>
           ))}
+        {mission.status === "published" && (
+          <button className="btn violet sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/agent-run`, "POST"))}>
+            Run agents
+          </button>
+        )}
         {mission.status === "payment_pending" && (
           <button className="btn" disabled={busy} onClick={pay}>
             Pay with PayPal
@@ -203,6 +208,9 @@ export function MissionCard({ mission, robots, bids, onChanged }: { mission: Mis
           {err}
         </div>
       )}
+      <Link className="card-link" href={`/agents?mission=${mission.id}`} style={{ display: "inline-block", marginTop: 8 }}>
+        Agent decisions →
+      </Link>
     </div>
   );
 }
