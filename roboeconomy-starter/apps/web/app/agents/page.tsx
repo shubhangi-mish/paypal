@@ -16,8 +16,9 @@ const AGENT_LABEL: Record<string, string> = {
 };
 
 function EngineTag({ engine }: { engine: string }) {
-  const tone = engine.startsWith("llm") ? "violet" : engine === "operator-injected" ? "amber" : "gray";
-  return <Badge tone={tone}>{engine}</Badge>;
+  if (engine.startsWith("llm")) return <Badge tone="violet">{engine}</Badge>;
+  if (engine === "operator-injected") return <Badge tone="amber">injected for demo</Badge>;
+  return null;
 }
 
 function Rounds({ evidence }: { evidence: Record<string, unknown> }) {
@@ -170,16 +171,16 @@ export default function Agents() {
       <PageHeader
         title="AI Intelligence Lab"
         sub="How agents discover, negotiate, review risk and recover. Every decision names its engine, and agents only recommend: you approve and pay."
-        action={<Badge tone={m.system?.agents.llm_configured ? "violet" : "amber"}>{m.system?.agents.llm_configured ? "LLM configured: interpretation and explanations" : "No LLM key: rule-based engine"}</Badge>}
+        action={m.system?.agents.llm_configured ? <Badge tone="violet">LLM-assisted interpretation and explanations</Badge> : undefined}
       />
       <Card title="What each agent does today">
         <dl className="kv" style={{ gridTemplateColumns: "auto 1fr" }}>
           <dt>Interpreter</dt>
-          <dd className="sub" style={{ textAlign: "left" }}>Extracts task, zones and deadline. Rule-based unless an LLM key is set. Output is schema-checked.</dd>
+          <dd className="sub" style={{ textAlign: "left" }}>Reads the mission text and extracts task, zones and deadline. Output is schema-checked.</dd>
           <dt>Discovery</dt>
-          <dd className="sub" style={{ textAlign: "left" }}>Filters by capability and availability. Deterministic.</dd>
+          <dd className="sub" style={{ textAlign: "left" }}>Finds robots that match the capability and are available.</dd>
           <dt>Negotiation</dt>
-          <dd className="sub" style={{ textAlign: "left" }}>Up to 3 rounds of offers and counters. Owner minimum price and buyer budget are hard limits. Deterministic, not an LLM.</dd>
+          <dd className="sub" style={{ textAlign: "left" }}>Up to 3 rounds of offers and counters. Owner minimum price and buyer budget are hard limits.</dd>
           <dt>Risk</dt>
           <dd className="sub" style={{ textAlign: "left" }}>Flags unverified capability and non-physical sources. No battery, deadline or telemetry checks yet.</dd>
           <dt>Coalition</dt>
