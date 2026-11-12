@@ -38,6 +38,7 @@ class Robot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     available: Mapped[bool] = mapped_column(Boolean, default=True)
+    min_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 class Mission(Base):
     __tablename__ = "missions"
@@ -66,9 +67,31 @@ class WebhookEvent(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True); event_type: Mapped[str] = mapped_column(String(96))
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    actor: Mapped[str] = mapped_column(String(64)); action: Mapped[str] = mapped_column(String(64))
+    resource: Mapped[str] = mapped_column(String(96)); detail: Mapped[str] = mapped_column(Text, default="{}")
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    mission_id: Mapped[str] = mapped_column(ForeignKey("missions.id")); kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), default="COMPLETED"); summary: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class AgentDecision(Base):
+    __tablename__ = "agent_decisions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id")); mission_id: Mapped[str] = mapped_column(String(36))
+    seq: Mapped[int] = mapped_column(Integer); agent: Mapped[str] = mapped_column(String(32)); action: Mapped[str] = mapped_column(String(64))
+    engine: Mapped[str] = mapped_column(String(64)); evidence: Mapped[str] = mapped_column(Text, default="{}"); explanation: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 # Columns added after the first release. create_all() never alters existing tables, so add them here.
 _NEW_COLUMNS = {
-    "robots": {"model": "VARCHAR(120)", "available": "BOOLEAN DEFAULT TRUE"},
+    "robots": {"model": "VARCHAR(120)", "available": "BOOLEAN DEFAULT TRUE", "min_price_minor": "INTEGER"},
     "missions": {"created_at": "TIMESTAMP"},
     "payment_intents": {"created_at": "TIMESTAMP"},
 }

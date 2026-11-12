@@ -12,19 +12,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from services.api.app.database import Base, Bid, Mission, PaymentIntent, Robot, SessionLocal, WebhookEvent, engine, ensure_columns
+from services.api.app.agents import router as agents_router, audit
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 app = FastAPI(title="RoboEconomy API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()], allow_methods=["*"], allow_headers=["*"])
 Base.metadata.create_all(engine)
 ensure_columns()
+app.include_router(agents_router)
 def get_db():
     with SessionLocal() as session:
         yield session
 def minor(v: Decimal) -> int:
     return int((v * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 def robot_out(x: Robot):
-    return {"id":x.id,"name":x.name,"owner":x.owner,"capability":x.capability,"rate_usd":x.rate_minor / 100,"source":x.source,"status":x.status,"model":x.model,"available":x.available is not False,"capability_verified":False}
+    return {"id":x.id,"name":x.name,"owner":x.owner,"capability":x.capability,"rate_usd":x.rate_minor / 100,"source":x.source,"status":x.status,"model":x.model,"available":x.available is not False,"min_price_usd":(x.min_price_minor/100 if x.min_price_minor else None),"capability_verified":False}
 def mission_out(x: Mission):
     return {"id":x.id,"description":x.description,"task_type":x.task_type,"budget_usd":x.budget_minor / 100,"currency":x.currency,"status":x.status.lower(),"awarded_bid_id":x.awarded_bid_id,"created_at":x.created_at.isoformat() if x.created_at else None}
 
@@ -35,10 +37,12 @@ class RobotIn(BaseModel):
     rate_usd: Decimal = Field(gt=0)
     source: Literal["simulated", "physical", "replay"] = "simulated"
     model: str | None = Field(default=None, max_length=120)
+    min_price_usd: Decimal | None = Field(default=None, gt=0)
 
 class RobotPatch(BaseModel):
     available: bool | None = None
     rate_usd: Decimal | None = Field(default=None, gt=0)
+    min_price_usd: Decimal | None = Field(default=None, gt=0)
 
 class MissionIn(BaseModel):
     description: str = Field(min_length=8)
@@ -63,8 +67,8 @@ def list_robots(db: Session = Depends(get_db)):
 
 @app.post("/api/v1/robots")
 def add_robot(data: RobotIn, db: Session = Depends(get_db)):
-    item = Robot(name=data.name, owner=data.owner, capability=data.capability, rate_minor=minor(data.rate_usd), source=data.source, model=data.model)
-    db.add(item); db.commit()
+    item = Robot(name=data.name, owner=data.owner, capability=data.capability, rate_minor=minor(data.rate_usd), source=data.source, model=data.model, min_price_minor=minor(data.min_price_usd) if data.min_price_usd else None)
+    db.add(item); audit(db, "owner", "robot.registered", f"robot:{item.id}", {"name": item.name, "source": item.source}); db.commit()
     return robot_out(item)
 
 @app.patch("/api/v1/robots/{robot_id}")
@@ -76,6 +80,8 @@ def patch_robot(robot_id: str, data: RobotPatch, db: Session = Depends(get_db)):
         robot.available = data.available
     if data.rate_usd is not None:
         robot.rate_minor = minor(data.rate_usd)
+    if data.min_price_usd is not None:
+        robot.min_price_minor = minor(data.min_price_usd)
     db.commit()
     return robot_out(robot)
 
@@ -90,7 +96,7 @@ def system_status():
             "webhook_configured": bool(os.getenv("PAYPAL_WEBHOOK_ID")),
         },
         "simulator": {"connected": False, "detail": "No Gazebo/ROS2 worker is reporting telemetry to this API."},
-        "agents": {"implemented": False},
+        "agents": {"implemented": True, "llm_configured": bool(os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")), "decision_engine": "llm+validators" if (os.getenv("LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")) else "rule-based+validators"},
     }
 
 @app.get("/api/v1/payments")
@@ -111,7 +117,7 @@ def list_missions(db: Session = Depends(get_db)):
 @app.post("/api/v1/missions")
 def add_mission(data: MissionIn, db: Session = Depends(get_db)):
     item = Mission(description=data.description, task_type=data.task_type, budget_minor=minor(data.budget_usd), currency=data.currency.upper())
-    db.add(item); db.commit()
+    db.add(item); audit(db, "customer", "mission.created", f"mission:{item.id}", {"budget_minor": item.budget_minor}); db.commit()
     return mission_out(item)
 
 @app.get("/api/v1/missions/{mission_id}/bids")
@@ -141,7 +147,7 @@ def award(mission_id: str, bid_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Mission or bid not found")
     if mission.status != "PUBLISHED":
         raise HTTPException(409, "Already awarded")
-    mission.status="PAYMENT_PENDING"; mission.awarded_bid_id=bid_id; bid.status="AWARDED"; db.commit()
+    mission.status="PAYMENT_PENDING"; mission.awarded_bid_id=bid_id; bid.status="AWARDED"; audit(db, "customer", "bid.awarded", f"mission:{mission_id}", {"bid_id": bid_id, "price_minor": bid.price_minor}); db.commit()
     return mission_out(mission)
 
 async def paypal_token():
@@ -185,7 +191,7 @@ async def create_order(data: OrderIn, db: Session = Depends(get_db)):
     if r.status_code not in (200, 201):
         db.rollback()
         raise HTTPException(502, f"PayPal create order failed: {r.status_code}")
-    body = r.json(); payment.paypal_order_id = body["id"]; payment.status = "BUYER_APPROVAL_PENDING"; db.commit()
+    body = r.json(); payment.paypal_order_id = body["id"]; payment.status = "BUYER_APPROVAL_PENDING"; audit(db, "system", "paypal.order_created", f"mission:{mission.id}", {"order_id": payment.paypal_order_id}); db.commit()
     approve_url = next((link["href"] for link in body.get("links", []) if link.get("rel") == "approve"), None)
     return {"payment_intent_id": payment.id, "order_id": payment.paypal_order_id, "approve_url": approve_url, "status": payment.status}
 
@@ -205,6 +211,7 @@ async def capture_order(order_id: str, db: Session = Depends(get_db)):
         db.get(Mission, payment.mission_id).status = "READY"
     else:
         payment.status = "CAPTURE_PENDING"
+    audit(db, "system", "paypal.capture_result", f"mission:{payment.mission_id}", {"order_id": order_id, "status": payment.status})
     db.commit()
     return {"order_id": order_id, "status": payment.status, "paypal": body}
 
