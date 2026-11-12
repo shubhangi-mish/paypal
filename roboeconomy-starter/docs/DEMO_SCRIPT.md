@@ -15,7 +15,7 @@ Target: under 3 minutes for YouTube. The full screen recording covers every feat
 "A customer publishes a mission with a budget. The agents interpret it, find matching robots, and negotiate with each owner over up to three rounds. A buyer agent and an owner agent trade offers. The owner's minimum price and the customer's budget are hard limits enforced in code, whatever the model says. The page shows every step, its engine, and an explanation. Agents only recommend. The customer decides."
 
 **1:10 Award and recovery (AI Agents)**
-"After awarding a robot, we inject a battery failure by hand. We label it as injected because there is no simulator. A recovery agent finds a substitute, negotiates a price for the remaining work, and asks the customer to approve. The approval goes into the audit log."
+"After awarding a robot, we trigger a battery failure by hand. In the full product a simulator such as Gazebo would report it, but that needs an Ubuntu machine and cloud hosting, which was not feasible for this MVP, so the failure is labelled as injected. A recovery agent finds a substitute, negotiates a price for the remaining work, and asks the customer to approve. The approval goes into the audit log."
 
 **1:35 Teams (Missions)**
 "For a bigger job, four zones in twenty minutes, one robot cannot finish. The coalition agent splits the zones across robots at minimum total cost, assuming ten minutes per zone, and negotiates each share. One click awards the whole team."
@@ -30,7 +30,7 @@ Target: under 3 minutes for YouTube. The full screen recording covers every feat
 "Here is the audit log of every action. And the RL benchmark: PPO trained in a synthetic environment against random, greedy and rule-based baselines. PPO scores 3.45 against 3.35 for rule-based, which is within noise, so we do not claim it wins, and it is not wired into live decisions."
 
 **2:45 Honest limits (Simulation, Settings)**
-"There is no Gazebo or physical robot yet, so the simulation page is empty rather than faked. Settings shows the true system status."
+"The idea extends to real robots. Gazebo or another robotics simulator can plug in here to supply live telemetry and detect failures. It needs Ubuntu and cloud compute, which was out of reach for a self-funded hackathon MVP, so this page stays honestly empty instead of showing fake positions. The marketplace, agents, negotiation, teams and PayPal payments you just saw are the working core. Settings shows the true system status."
 
 **2:55 Close**
 "RoboEconomy: robots hired, agents negotiating, PayPal settling, every step auditable."
