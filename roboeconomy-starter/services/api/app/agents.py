@@ -50,15 +50,15 @@ def _is_anthropic(key: str | None) -> bool:
 
 
 def _llm_model() -> str:
-    return os.getenv("LLM_MODEL") or ("claude-sonnet-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-nano")
+    return os.getenv("LLM_MODEL") or ("claude-sonnet-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-mini")
 
 
 def _fast_model() -> str:
-    return os.getenv("LLM_FAST_MODEL") or ("claude-haiku-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-nano")
+    return os.getenv("LLM_FAST_MODEL") or ("claude-haiku-5-5" if _is_anthropic(_llm_key()) else "gpt-4.1-mini")
 
 
 async def llm_text(system: str, user: str, max_tokens: int = 400, model: str | None = None) -> str | None:
-    """One chat call: OpenAI Chat Completions by default (gpt-4.1-nano), Anthropic if the key is an Anthropic key.
+    """One chat call: OpenAI Chat Completions by default (gpt-4.1-mini), Anthropic if the key is an Anthropic key.
     Returns None when no key is configured or the call fails."""
     key = _llm_key()
     if not key:
