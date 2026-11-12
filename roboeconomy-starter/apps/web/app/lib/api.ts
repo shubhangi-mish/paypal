@@ -30,7 +30,7 @@ export type Mission = {
   awarded_bid_id: string | null;
   created_at: string | null;
 };
-export type Bid = { id: string; mission_id: string; robot_id: string; price_usd: number; status: string };
+export type Bid = { id: string; mission_id: string; robot_id: string; price_usd: number; status: string; team_id?: string | null; share_zones?: number | null };
 export type Payment = {
   id: string;
   mission_id: string;

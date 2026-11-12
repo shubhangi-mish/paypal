@@ -10,6 +10,7 @@ Honesty rules (see AGENTS.md):
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -25,6 +26,7 @@ from services.api.app.database import AgentDecision, AgentRun, AuditLog, Bid, Mi
 router = APIRouter()
 TASK_TYPES = ("inspection", "navigation", "delivery")
 MAX_ROUNDS = 3
+ZONE_MINUTES = 10  # ASSUMPTION: minutes one robot needs per zone. No telemetry exists, so this is a labelled planning constant, not a measurement.
 DEFAULT_MIN_FRACTION = 0.75  # owner floor when the owner has not set one: 75% of listed rate
 
 
@@ -152,7 +154,7 @@ async def explain(facts: str, fallback: str) -> tuple[str, str]:
 
 # ---------------------------------------------------------------- endpoints
 def _bid_out(b: Bid):
-    return {"id": b.id, "robot_id": b.robot_id, "price_usd": b.price_minor / 100, "status": b.status.lower()}
+    return {"id": b.id, "robot_id": b.robot_id, "price_usd": b.price_minor / 100, "status": b.status.lower(), "team_id": b.team_id, "share_zones": b.share_zones}
 
 
 @router.post("/api/v1/missions/{mission_id}/agent-run")
@@ -206,6 +208,104 @@ async def agent_run(mission_id: str, db: Session = Depends(get_db)):
     db.commit()
     bids = [_bid_out(b) for b in db.scalars(select(Bid).where(Bid.mission_id == mission_id))]
     return {"run_id": rec.run.id, "recommendation": recommendation, "bids": bids}
+
+
+# ---------------------------------------------------------------- coalition (team) planning
+def allocate(zones: int, cap: int, per_zone_cost: dict[str, float]) -> dict[str, int] | None:
+    """Minimum-cost split of `zones` across robots when each robot can cover at most `cap` zones in time.
+    Costs are linear per zone, so filling the cheapest robots first is optimal. None if capacity is insufficient."""
+    out, left = {}, zones
+    for rid, _ in sorted(per_zone_cost.items(), key=lambda kv: kv[1]):
+        if left <= 0:
+            break
+        n = min(cap, left)
+        if n > 0:
+            out[rid], left = n, left - n
+    return out if left <= 0 else None
+
+
+class TeamIn(BaseModel):
+    zones: int | None = Field(default=None, ge=1, le=50)
+    deadline_minutes: int | None = Field(default=None, ge=1, le=1440)
+
+
+@router.post("/api/v1/missions/{mission_id}/team-run")
+async def team_run(mission_id: str, data: TeamIn | None = None, db: Session = Depends(get_db)):
+    """Coalition agent: split a multi-zone mission across several robots when one robot cannot finish by the deadline.
+    Zones and deadline come from the mission text (or the buyer's override). Per-zone time is an assumption (ZONE_MINUTES)."""
+    data = data or TeamIn()
+    mission = db.get(Mission, mission_id)
+    if not mission:
+        raise HTTPException(404, "Mission not found")
+    if mission.status != "PUBLISHED":
+        raise HTTPException(409, "Agents only plan teams for missions that are open for bids")
+    rec = Recorder(db, mission_id, "team")
+    spec, eng = await interpret(mission.description)
+    zones = data.zones or spec.get("zones")
+    deadline = data.deadline_minutes or spec.get("deadline_minutes")
+    src = "buyer override" if (data.zones or data.deadline_minutes) else "mission text"
+    rec.log("mission_interpreter", "interpreted_mission", eng, {"spec": spec, "zones_used": zones, "deadline_used": deadline, "source": src},
+            f"Zones: {zones or 'not found'}; deadline: {str(deadline) + ' min' if deadline else 'not found'} (from {src}).")
+
+    def finish(summary: dict, status: str = "COMPLETED"):
+        rec.run.status, rec.run.summary = status, json.dumps(summary)
+        db.commit()
+        return {"run_id": rec.run.id, **summary}
+
+    if not zones or zones < 2 or not deadline:
+        rec.log("coalition", "no_team_needed", "rule-based", {}, "A team needs a mission with at least 2 zones and a deadline. Provide them in the mission text or as an override.")
+        return finish({"team": None, "reason": "needs zones >= 2 and a deadline"})
+    cap = deadline // ZONE_MINUTES
+    rec.log("coalition", "time_model", "rule-based", {"zone_minutes_assumed": ZONE_MINUTES, "max_zones_per_robot": cap, "solo_minutes": zones * ZONE_MINUTES},
+            f"Assuming {ZONE_MINUTES} min per zone (an assumption, not measured), one robot covers at most {cap} zone(s) in {deadline} min; the job needs {zones * ZONE_MINUTES} min solo.")
+    if cap < 1:
+        rec.log("coalition", "infeasible", "rule-based", {}, f"Even one zone takes longer than {deadline} minutes under the time assumption.")
+        return finish({"team": None, "reason": "deadline shorter than one zone"}, "FAILED")
+    if cap >= zones:
+        rec.log("coalition", "no_team_needed", "rule-based", {}, "One robot can cover every zone before the deadline, so a team is not needed. Use Run agents for the cheapest single robot.")
+        return finish({"team": None, "reason": "one robot suffices"})
+
+    pool = [r for r in db.scalars(select(Robot)) if r.capability == mission.task_type and r.available is not False]
+    rec.log("discovery", "discovered_robots", "rule-based", {"candidates": [r.name for r in pool]}, f"{len(pool)} available robot(s) match '{mission.task_type}'.")
+    deals: dict[str, dict] = {}
+    while True:
+        alloc = allocate(zones, cap, {r.id: r.rate_minor / zones for r in pool})
+        if not alloc:
+            rec.log("coalition", "no_feasible_team", "rule-based", {"robots": len(pool), "needed": -(-zones // cap)},
+                    f"Not enough capacity: {len(pool)} robot(s) can cover at most {len(pool) * cap} of {zones} zones in time.")
+            return finish({"team": None, "reason": "not enough robots to meet the deadline"}, "FAILED")
+        failed = None
+        for rid, n in alloc.items():
+            r = next(x for x in pool if x.id == rid)
+            frac = n / zones
+            ask, floor, bud = int(round(r.rate_minor * frac)), int(round(owner_floor(r) * frac)), int(round(mission.budget_minor * frac))
+            res = negotiate(ask, floor, bud)
+            rec.log("negotiation", "negotiated_share", "rule-based", {"robot": r.name, "zones": n, "ask_minor": ask, "owner_floor_minor": floor, "budget_minor": bud, **res},
+                    f"{r.name} for {n}/{zones} zones: " + (f"agreed at {usd(res['price_minor'])}; owner floor {usd(floor)} respected." if res["agreed"] else f"no deal: {res['reason']}; trying a different team."))
+            if res["agreed"]:
+                deals[rid] = {"robot": r, "zones": n, "price": res["price_minor"]}
+            else:
+                failed = rid
+                break
+        if failed is None:
+            break
+        pool = [r for r in pool if r.id != failed]
+        deals.clear()
+
+    total = sum(d["price"] for d in deals.values())
+    assert total <= mission.budget_minor  # validator: each share is capped at its fraction of the budget
+    team_id = str(uuid.uuid4())
+    members = []
+    for rid, d in deals.items():
+        db.add(Bid(mission_id=mission_id, robot_id=rid, price_minor=d["price"], team_id=team_id, share_zones=d["zones"]))
+        members.append({"robot_id": rid, "robot": d["robot"].name, "zones": d["zones"], "price_usd": d["price"] / 100})
+    rec.log("risk", "reviewed_risk", "rule-based", {"flags": {d["robot"].name: risk_flags(d["robot"]) for d in deals.values()}, "team_risk": "a team has more points of failure and needs every member to finish"},
+            "Capability is unverified for every member, and a team depends on all members finishing. Recovery can replace one after a failure.")
+    team = {"team_id": team_id, "members": members, "total_usd": total / 100, "requires_approval": True}
+    fallback = f"Recommended a team of {len(members)}: " + ", ".join(f"{m['robot']} ({m['zones']} zones, ${m['price_usd']:.2f})" for m in members) + f". Total {usd(total)} within your {usd(mission.budget_minor)} budget; one robot alone would need {zones * ZONE_MINUTES} min against your {deadline} min deadline."
+    text, eng2 = await explain(f"team={members}; total={usd(total)}; budget={usd(mission.budget_minor)}; zones={zones}; deadline={deadline}min; solo_needs={zones * ZONE_MINUTES}min", fallback)
+    rec.log("explanation", "explained_team", eng2, team, text)
+    return finish({"team": team})
 
 
 class FailureIn(BaseModel):

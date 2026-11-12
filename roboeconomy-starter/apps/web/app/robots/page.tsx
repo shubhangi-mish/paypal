@@ -71,8 +71,8 @@ function OwnedRobot({ robot, m }: { robot: Robot; m: ReturnType<typeof useMarket
   const [rate, setRate] = useState(String(robot.rate_usd));
   const [err, setErr] = useState<string | null>(null);
   const myBids = m.bids.filter((b) => b.robot_id === robot.id);
-  const won = myBids.filter((b) => m.missions.find((x) => x.id === b.mission_id)?.awarded_bid_id === b.id);
-  const earned = won.reduce((sum, b) => sum + m.payments.filter((p) => p.mission_id === b.mission_id && captured(p)).reduce((s, p) => s + p.amount_usd, 0), 0);
+  const won = myBids.filter((b) => b.status === "awarded");
+  const earned = won.reduce((sum, b) => sum + (m.payments.some((p) => p.mission_id === b.mission_id && captured(p)) ? b.price_usd : 0), 0);
 
   async function patch(body: object) {
     setErr(null);

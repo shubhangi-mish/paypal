@@ -53,6 +53,8 @@ class Bid(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     mission_id: Mapped[str] = mapped_column(ForeignKey("missions.id")); robot_id: Mapped[str] = mapped_column(ForeignKey("robots.id")); price_minor: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(24), default="SUBMITTED")
+    team_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # set when this bid is one share of a team plan
+    share_zones: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 class PaymentIntent(Base):
     __tablename__ = "payment_intents"
@@ -93,6 +95,7 @@ class AgentDecision(Base):
 _NEW_COLUMNS = {
     "robots": {"model": "VARCHAR(120)", "available": "BOOLEAN DEFAULT TRUE", "min_price_minor": "INTEGER"},
     "missions": {"created_at": "TIMESTAMP"},
+    "bids": {"team_id": "VARCHAR(36)", "share_zones": "INTEGER"},
     "payment_intents": {"created_at": "TIMESTAMP"},
 }
 

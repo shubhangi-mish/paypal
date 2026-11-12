@@ -133,6 +133,7 @@ export function MissionCard({ mission, robots, bids, onChanged }: { mission: Mis
   const bidders = new Set(mine.map((b) => b.robot_id));
   const candidates = robots.filter((r) => r.capability === mission.task_type && r.available && !bidders.has(r.id));
   const step = stepIndex(mission.status);
+  const teams = Object.entries(mine.filter((b) => b.team_id).reduce<Record<string, Bid[]>>((acc, b) => ((acc[b.team_id as string] ||= []).push(b), acc), {}));
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -172,7 +173,24 @@ export function MissionCard({ mission, robots, bids, onChanged }: { mission: Mis
           </span>
         ))}
       </div>
-      {mine.map((b) => (
+      {teams.map(([tid, tb]) => (
+        <div className="bid-row" key={tid} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+          <div className="spread">
+            <strong>Team offer · {usd(tb.reduce((s, b) => s + b.price_usd, 0))} total</strong>
+            {mission.status === "published" && (
+              <button className="btn sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/award-team/${tid}`, "POST"))}>
+                Award team
+              </button>
+            )}
+          </div>
+          {tb.map((b) => (
+            <span className="sub" key={b.id}>
+              {name(b.robot_id)} · {b.share_zones} zone(s) · {usd(b.price_usd)} · {b.status}
+            </span>
+          ))}
+        </div>
+      ))}
+      {mine.filter((b) => !b.team_id).map((b) => (
         <div className="bid-row" key={b.id}>
           <span>
             <strong style={{ display: "inline" }}>{name(b.robot_id)}</strong> bid {usd(b.price_usd)} · <span className="sub">{b.status}</span>
@@ -194,6 +212,11 @@ export function MissionCard({ mission, robots, bids, onChanged }: { mission: Mis
         {mission.status === "published" && (
           <button className="btn violet sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/agent-run`, "POST"))}>
             Run agents
+          </button>
+        )}
+        {mission.status === "published" && (
+          <button className="btn violet sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/team-run`, "POST", {}))}>
+            Plan team
           </button>
         )}
         {mission.status === "payment_pending" && (

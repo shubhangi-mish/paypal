@@ -124,7 +124,7 @@ def add_mission(data: MissionIn, db: Session = Depends(get_db)):
 def list_bids(mission_id: str, db: Session = Depends(get_db)):
     if not db.get(Mission, mission_id):
         raise HTTPException(404, "Mission not found")
-    return [{"id":b.id,"mission_id":b.mission_id,"robot_id":b.robot_id,"price_usd":b.price_minor/100,"status":b.status.lower()} for b in db.scalars(select(Bid).where(Bid.mission_id == mission_id))]
+    return [{"id":b.id,"mission_id":b.mission_id,"robot_id":b.robot_id,"price_usd":b.price_minor/100,"status":b.status.lower(),"team_id":b.team_id,"share_zones":b.share_zones} for b in db.scalars(select(Bid).where(Bid.mission_id == mission_id))]
 
 @app.post("/api/v1/missions/{mission_id}/bids")
 def add_bid(mission_id: str, data: BidIn, db: Session = Depends(get_db)):
@@ -140,6 +140,23 @@ def add_bid(mission_id: str, data: BidIn, db: Session = Depends(get_db)):
     db.add(item); db.commit()
     return {"id":item.id,"mission_id":item.mission_id,"robot_id":item.robot_id,"price_usd":item.price_minor/100,"status":item.status.lower()}
 
+@app.post("/api/v1/missions/{mission_id}/award-team/{team_id}")
+def award_team(mission_id: str, team_id: str, db: Session = Depends(get_db)):
+    mission = db.get(Mission, mission_id)
+    bids = list(db.scalars(select(Bid).where(Bid.mission_id == mission_id, Bid.team_id == team_id)))
+    if not mission or not bids:
+        raise HTTPException(404, "Mission or team not found")
+    if mission.status != "PUBLISHED":
+        raise HTTPException(409, "Already awarded")
+    total = sum(b.price_minor for b in bids)
+    if total > mission.budget_minor:
+        raise HTTPException(400, "Team total exceeds budget")
+    for b in bids:
+        b.status = "AWARDED"
+    mission.status = "PAYMENT_PENDING"; mission.awarded_bid_id = bids[0].id
+    audit(db, "customer", "team.awarded", f"mission:{mission_id}", {"team_id": team_id, "bid_ids": [b.id for b in bids], "total_minor": total}); db.commit()
+    return mission_out(mission)
+
 @app.post("/api/v1/missions/{mission_id}/award/{bid_id}")
 def award(mission_id: str, bid_id: str, db: Session = Depends(get_db)):
     mission, bid = db.get(Mission, mission_id), db.get(Bid, bid_id)
@@ -147,6 +164,8 @@ def award(mission_id: str, bid_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Mission or bid not found")
     if mission.status != "PUBLISHED":
         raise HTTPException(409, "Already awarded")
+    if bid.team_id:
+        raise HTTPException(409, "This offer is one share of a team plan; award the whole team instead")
     mission.status="PAYMENT_PENDING"; mission.awarded_bid_id=bid_id; bid.status="AWARDED"; audit(db, "customer", "bid.awarded", f"mission:{mission_id}", {"bid_id": bid_id, "price_minor": bid.price_minor}); db.commit()
     return mission_out(mission)
 
@@ -167,7 +186,7 @@ async def create_order(data: OrderIn, db: Session = Depends(get_db)):
     mission = db.get(Mission, data.mission_id)
     if not mission or mission.status != "PAYMENT_PENDING" or not mission.awarded_bid_id:
         raise HTTPException(409, "Mission is not awaiting payment")
-    bid = db.get(Bid, mission.awarded_bid_id)
+    total = sum(b.price_minor for b in db.scalars(select(Bid).where(Bid.mission_id == mission.id, Bid.status == "AWARDED")))  # one bid, or every share of a team
     payment = db.scalar(select(PaymentIntent).where(PaymentIntent.mission_id == mission.id))
     if payment and payment.paypal_order_id:
         if payment.status == "CAPTURED":
@@ -182,7 +201,7 @@ async def create_order(data: OrderIn, db: Session = Depends(get_db)):
             host = "www.sandbox.paypal.com" if os.getenv("PAYPAL_ENV", "sandbox") == "sandbox" else "www.paypal.com"
             approve_url = f"https://{host}/checkoutnow?token={payment.paypal_order_id}"
         return {"payment_intent_id": payment.id, "order_id": payment.paypal_order_id, "approve_url": approve_url, "status": payment.status, "idempotent": True}
-    payment = payment or PaymentIntent(mission_id=mission.id, amount_minor=bid.price_minor, currency=mission.currency, request_id=str(uuid.uuid4()))
+    payment = payment or PaymentIntent(mission_id=mission.id, amount_minor=total, currency=mission.currency, request_id=str(uuid.uuid4()))
     db.add(payment); db.flush()
     base, token = await paypal_token()
     payload = {"intent": "CAPTURE", "purchase_units": [{"reference_id": mission.id, "amount": {"currency_code": payment.currency, "value": f"{payment.amount_minor / 100:.2f}"}}], "application_context": {"return_url": os.getenv("PAYPAL_RETURN_URL", "http://localhost:3000/?checkout=success"), "cancel_url": os.getenv("PAYPAL_CANCEL_URL", "http://localhost:3000/?checkout=cancelled")}}

@@ -12,6 +12,7 @@ const AGENT_LABEL: Record<string, string> = {
   explanation: "Explanation",
   monitor: "Failure monitor",
   recovery: "Recovery",
+  coalition: "Coalition",
 };
 
 function EngineTag({ engine }: { engine: string }) {
@@ -88,6 +89,11 @@ function Trace({ mission, m }: { mission: Mission; m: ReturnType<typeof useMarke
         {mission.status === "published" && (
           <button className="btn violet sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/agent-run`, "POST"))}>
             {busy ? "Running…" : "Run agents"}
+          </button>
+        )}
+        {mission.status === "published" && (
+          <button className="btn violet sm" disabled={busy} onClick={() => act(() => call(`/api/v1/missions/${mission.id}/team-run`, "POST", {}))}>
+            {busy ? "Planning…" : "Plan team"}
           </button>
         )}
         {awardedRobot && (
@@ -176,10 +182,12 @@ export default function Agents() {
           <dd className="sub" style={{ textAlign: "left" }}>Up to 3 rounds of offers and counters. Owner minimum price and buyer budget are hard limits. Deterministic, not an LLM.</dd>
           <dt>Risk</dt>
           <dd className="sub" style={{ textAlign: "left" }}>Flags unverified capability and non-physical sources. No battery, deadline or telemetry checks yet.</dd>
+          <dt>Coalition</dt>
+          <dd className="sub" style={{ textAlign: "left" }}>Splits a multi-zone mission across several robots when one cannot meet the deadline. Minimum-cost split, each share negotiated within owner floors and budget. Assumes 10 minutes per zone: an assumption, not a measurement.</dd>
           <dt>Recovery</dt>
           <dd className="sub" style={{ textAlign: "left" }}>After an injected failure, finds a substitute and proposes a revised price for the remaining work. Needs approval.</dd>
           <dt>Not built</dt>
-          <dd className="sub" style={{ textAlign: "left" }}>Multi-robot coalitions (OR-Tools), RL-driven decisions in the marketplace, Gazebo-based failure detection.</dd>
+          <dd className="sub" style={{ textAlign: "left" }}>OR-Tools optimisation for large teams, RL-driven decisions in the marketplace, Gazebo-based failure detection.</dd>
         </dl>
       </Card>
 

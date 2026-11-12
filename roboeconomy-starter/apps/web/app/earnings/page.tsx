@@ -11,7 +11,7 @@ export default function Earnings() {
   // Awarded missions that have no PayPal order yet still represent expected revenue.
   const unordered = m.missions
     .filter((x) => x.status === "payment_pending" && !m.payments.some((p) => p.mission_id === x.id))
-    .reduce((s, x) => s + (m.bids.find((b) => b.id === x.awarded_bid_id)?.price_usd ?? 0), 0);
+    .reduce((s, x) => s + m.bids.filter((b) => b.mission_id === x.id && b.status === "awarded").reduce((t, b) => t + b.price_usd, 0), 0);
   const estimated = confirmedTotal + pendingTotal + unordered;
 
   return (
